@@ -8,6 +8,9 @@ LAN.
 It shares the cable and the baud rate with the boot log, so nothing changes about flashing or
 `pio device monitor`.
 
+A reference client lives in [`tools/serialctl/`](https://github.com/Blueforcer/awtrix-ng/tree/main/tools/serialctl)
+- it speaks everything below, including the pixel streaming, and its README is the manual.
+
 | | |
 |---|---|
 | Port | UART0 - the one the USB bridge is wired to |
@@ -251,3 +254,4 @@ Only `cmd/*` topics and frames are reachable. File, icon and script uploads are 
 * [Art-Net](../guides/artnet.md) - the same pixel streaming over the network
 * [Errors](errors.md) - the error envelope the replies use
 * [Flashing](../getting-started/flashing.md) - the other thing this cable does
+* `tools/serialctl/README.md` - the reference client for this channel
