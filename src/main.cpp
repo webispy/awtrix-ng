@@ -10,6 +10,7 @@
 #include "core/CoreEngine.h"
 #include "core/FrameClock.h"
 #include "core/StrCase.h"
+#include "core/SocProfile.h"
 #include "core/api/CapabilitiesJson.h"
 #include "core/script/ScriptHeap.h"
 #include "core/apps/AppRegistry.h"
@@ -200,6 +201,16 @@ void applyTimeConfig(const DeviceConfig& cfg, bool force) {
 }
 
 void setup() {
+  // The buzzer on these boards is active high and its default pin is GPIO15 - which is also MTDO,
+  // whose internal pull-up is on after every reset. So the buzzer is energised from the instant the
+  // chip comes up until something drives that pin low, and Esp32Board::begin() is a filesystem
+  // mount and a config load away. Doing it first costs microseconds and takes the boot beep off
+  // every reset. The download-mode window is not ours to fix: no firmware runs there at all.
+  if (const int buzzer = pins::activeProfile().defaults.buzzer; buzzer >= 0) {
+    pinMode(buzzer, OUTPUT);
+    digitalWrite(buzzer, LOW);
+  }
+
   Serial.begin(115200);
   Serial.println();
 

@@ -186,6 +186,7 @@ in [GPIO & boards](../reference/gpio.md).
 | **The write aborts partway** | Lower the baud rate - `--baud 115200` completes where 460800 does not. The chip is left unbootable until a write succeeds, so just repeat it. |
 | **`A fatal error occurred: Failed to connect`** | Some boards need the boot button held while the tool connects. On a TC001 that is not required; on a DIY board it often is. |
 | **`Unable to verify flash chip connection`**, and the reason differs every attempt | esptool speeds the port up partway through connecting, and not every USB-to-serial bridge survives that. Add `--no-stub` to the command: it holds one speed the whole way, which is slower but gets through. The browser flasher retries that way on its own. |
+| **It beeps continuously while flashing** | Expected, and not a fault. The buzzer sits on GPIO 15, which is also MTDO - a strapping pin whose internal pull-up is on after every reset - and the buzzer is active high. So the line is held at its active level for as long as the chip sits in download mode, where no firmware runs to pull it low. It stops when the new firmware boots. Nothing in software can silence the download-mode window; a shorter write is the only lever. |
 | **Boots, but the panel stays dark** | The wrong matrix pin for your hardware, or brightness at 0. |
 | **Boots, but the hardware misbehaves** | Watch the serial log. A stored pin map the chip cannot use is announced there, and AWTRIX falls back to the defaults for its chip. |
 
