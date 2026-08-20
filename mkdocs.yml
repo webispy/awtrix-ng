@@ -109,6 +109,7 @@ nav:
       - API:
           - HTTP API v1: reference/http.md
           - MQTT topics: reference/mqtt.md
+          - USB serial control: reference/serial.md
           - App & notification payload: reference/payload.md
           - Visual reference: reference/visuals.md
           - Device state: reference/device.md
