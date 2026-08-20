@@ -193,8 +193,9 @@ of silence, so the fragment left behind by an unplugged cable cannot splice onto
 the next session. A sender that wants to be sure can write a bare newline after connecting; blank
 lines are ignored.
 
-**Lines are capped at 512 bytes.** A longer one is answered with `payloadTooLarge` and swallowed to
-the next newline rather than half-parsed.
+**Lines are capped at 2048 bytes.** A longer one is answered with `payloadTooLarge` and swallowed to
+the next newline rather than half-parsed. The cap covers the whole line, so the topic and any `#seq`
+prefix come out of the same budget as the body - about 25 bytes of it for a typical topic.
 
 **Leave DTR and RTS alone.** Both are wired to the reset circuit - EN and GPIO0 - which is how
 `esptool` puts the chip into download mode. The common advice is to lower them before opening the

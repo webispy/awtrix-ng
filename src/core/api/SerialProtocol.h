@@ -31,7 +31,10 @@ enum class SerialEvent : uint8_t {
 
 class SerialProtocol {
  public:
-  static constexpr std::size_t kDefaultMaxLine = 512;
+  // Command lines are short - a notification payload is tens of bytes - but a frame of pixel art
+  // sent as draw commands is not, and the HTTP side allows 8 KB for exactly that. 2 KB covers a
+  // full-panel bitmap and leaves the RX ring, which is twice this, room to absorb a stalled loop.
+  static constexpr std::size_t kDefaultMaxLine = 2048;
 
   explicit SerialProtocol(std::size_t maxLine = kDefaultMaxLine) : maxLine_(maxLine) {}
 
