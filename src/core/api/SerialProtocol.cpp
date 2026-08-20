@@ -5,8 +5,8 @@ namespace api {
 
 namespace {
 
-// Decimal only, and it refuses to overflow into nonsense: a sequence number arrives from a cable,
-// not from a peer we authenticated.
+// Decimal only, and it refuses to overflow into nonsense: a header is attacker-adjacent input in
+// the sense that it arrives from a cable, not from a peer we authenticated.
 bool parseUnsigned(const std::string& s, std::size_t from, std::size_t to, long& out) {
   if (from >= to) return false;
   long v = 0;
@@ -31,21 +31,37 @@ SerialEvent SerialProtocol::fail(const char* code, const char* message) {
 void SerialProtocol::reset() {
   mode_ = Mode::Line;
   line_.clear();
+  frame_.clear();
+  want_ = 0;
 }
 
 bool SerialProtocol::expire(int64_t nowMs, int64_t lastByteMs, int64_t idleMs) {
-  const bool pending = !line_.empty() || mode_ == Mode::Discard;
+  const bool pending = !line_.empty() || awaitingFrame() || mode_ == Mode::Discard;
   if (!pending || nowMs - lastByteMs < idleMs) return false;
   reset();
   return true;
 }
 
 SerialEvent SerialProtocol::push(char c) {
-  // A line that outgrew the cap is already unusable, so the rest of it is swallowed rather than
-  // half-parsed. The sender learns about it from the error reply, not from silence.
-  if (mode_ == Mode::Discard) {
-    if (c == '\n') mode_ = Mode::Line;
-    return SerialEvent::None;
+  switch (mode_) {
+    case Mode::Frame:
+    case Mode::Delta: {
+      frame_.push_back(static_cast<uint8_t>(c));
+      if (frame_.size() < want_) return SerialEvent::None;
+      const SerialEvent done = mode_ == Mode::Frame ? SerialEvent::Frame : SerialEvent::Delta;
+      mode_ = Mode::Line;
+      return done;
+    }
+
+    // A line that outgrew the cap is already unusable, so the rest of it is swallowed rather than
+    // half-parsed. The sender learns about it from the error reply, not from silence.
+    case Mode::Discard:
+      if (c == '\n') mode_ = Mode::Line;
+      return SerialEvent::None;
+
+    case Mode::Line:
+    default:
+      break;
   }
 
   if (c == '\r') return SerialEvent::None;
@@ -70,11 +86,13 @@ SerialEvent SerialProtocol::finishLine() {
   while (at < line.size() && (line[at] == ' ' || line[at] == '\t')) ++at;
   if (at >= line.size()) return SerialEvent::None;  // blank line: the resync nudge
 
+  if (line.compare(at, 2, "!F") == 0 || line.compare(at, 2, "!D") == 0)
+    return beginFrame(line.substr(at));
+
   if (line[at] == '#') {
     const std::size_t sp = line.find(' ', at);
     if (sp == std::string::npos) return fail("invalidRequest", "sequence number without a command");
-    if (!parseUnsigned(line, at + 1, sp, seq_))
-      return fail("invalidRequest", "malformed sequence number");
+    if (!parseUnsigned(line, at + 1, sp, seq_)) return fail("invalidRequest", "malformed sequence number");
     at = sp + 1;
     while (at < line.size() && line[at] == ' ') ++at;
     if (at >= line.size()) return fail("invalidRequest", "sequence number without a command");
@@ -88,6 +106,30 @@ SerialEvent SerialProtocol::finishLine() {
     body_ = line.substr(sp + 1);
   }
   return SerialEvent::Command;
+}
+
+// header is "!F<seq>:<len>" or "!D<seq>:<len>", already trimmed of leading blanks.
+SerialEvent SerialProtocol::beginFrame(const std::string& header) {
+  const bool delta = header[1] == 'D';
+  const std::size_t colon = header.find(':', 2);
+  long len = 0;
+  if (colon == std::string::npos) return fail("invalidRequest", "frame header needs <seq>:<len>");
+  if (!parseUnsigned(header, 2, colon, seq_)) return fail("invalidRequest", "malformed frame sequence");
+  if (!parseUnsigned(header, colon + 1, header.size(), len))
+    return fail("invalidRequest", "malformed frame length");
+
+  const std::size_t want = static_cast<std::size_t>(len);
+  if (want == 0 || want > maxFrame_) return fail("payloadTooLarge", "frame length out of range");
+  // Truncating either record type would land half a pixel in the canvas, so the length has to
+  // divide evenly rather than being rounded down here.
+  const std::size_t stride = delta ? 5u : 3u;
+  if (want % stride != 0) return fail("invalidRequest", "frame length is not a whole pixel count");
+
+  frame_.clear();
+  frame_.reserve(want);
+  want_ = want;
+  mode_ = delta ? Mode::Delta : Mode::Frame;
+  return SerialEvent::None;
 }
 
 }

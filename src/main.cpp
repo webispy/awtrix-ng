@@ -272,7 +272,7 @@ void setup() {
     g_board->show(*g_canvas);
   });
   g_engine = new CoreEngine(g_audio, *g_display, *g_system);
-  g_serial.begin(*g_engine);
+  g_serial.begin(*g_engine, g_canvas->width() * g_canvas->height());
   g_engine->setBatteryAvailable(g_board->hasBattery());
   g_engine->setTemperatureAvailable(g_board->sensors().hasSensor());
   g_engine->setHumidityAvailable(g_board->sensors().hasHumidity());
@@ -675,7 +675,7 @@ void loop() {
 
   // What owns the screen, in order: the power on/off animation, then moodlight, the provisioning
   // screen, an Art-Net frame if one arrived, and otherwise the normal render pipeline.
-  bool artnetFrame = false;
+  bool streamFrame = false;
   switch (g_power->update(matrixOn, now)) {
     case render::PowerAnimator::Phase::Off:
       g_canvas->clear(0x000000u);
@@ -687,10 +687,15 @@ void loop() {
       if (g_engine->state().runtime().moodlightMode) {
         g_canvas->clear(g_engine->state().runtime().moodlightColor);
         g_board->setBrightness(g_engine->state().runtime().moodlightBrightness);
+      // Ahead of the provisioning screen, unlike Art-Net: a device that has never seen a network
+      // is exactly the one somebody drives over the cable, and "please configure me" must not sit
+      // on top of the frames they are sending. It comes back when the stream lapses.
+      } else if (g_serial.paint(*g_canvas, now)) {
+        streamFrame = true;
       } else if (g_net.apMode()) {
         render::drawProvisioningScreen(*g_canvas, awtrixFont(), now);
       } else if (g_artnet.tick(*g_canvas, now)) {
-        artnetFrame = true;
+        streamFrame = true;
       } else {
         g_pipeline->renderFrame(*g_canvas, now);
       }
@@ -710,9 +715,9 @@ void loop() {
     g_system->runPending();
   }
 
-  // An Art-Net sender sets its own frame rate, so back off to a short yield and let the packets
-  // pace the loop instead of the frame budget.
-  if (artnetFrame) {
+  // A streaming sender - Art-Net or serial - sets its own frame rate, so back off to a short yield
+  // and let the arriving frames pace the loop instead of the frame budget.
+  if (streamFrame) {
     delay(5);
   } else {
     paceFrame();
