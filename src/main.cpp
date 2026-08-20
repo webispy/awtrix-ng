@@ -74,6 +74,7 @@
 #include "transport/net/ArtnetService.h"
 #include "transport/net/DiscoveryService.h"
 #include "transport/net/NetworkService.h"
+#include "transport/serial/SerialApiService.h"
 
 using namespace awtrix;
 
@@ -126,6 +127,7 @@ PeripheryService g_periphery;
 BootAnimator g_bootAnim;
 DiscoveryService g_disco;
 ArtnetService g_artnet;
+SerialApiService g_serial;
 #if defined(AWTRIX_SOC_ESP32S3)
 std::unique_ptr<AudioOutEsp32> g_radio;
 #endif
@@ -211,6 +213,9 @@ void setup() {
     digitalWrite(buzzer, LOW);
   }
 
+  // The default RX ring is 256 bytes, which covers 22 ms of traffic at 115200 - less than one
+  // frame period. Has to precede begin().
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   Serial.println();
 
@@ -267,6 +272,7 @@ void setup() {
     g_board->show(*g_canvas);
   });
   g_engine = new CoreEngine(g_audio, *g_display, *g_system);
+  g_serial.begin(*g_engine);
   g_engine->setBatteryAvailable(g_board->hasBattery());
   g_engine->setTemperatureAvailable(g_board->sensors().hasSensor());
   g_engine->setHumidityAvailable(g_board->sensors().hasHumidity());
@@ -634,6 +640,11 @@ void loop() {
   probe::begin();
   g_http.tick();
   probe::report("http", 256);
+  probe::begin();
+  // Unconditional: a command has to land even when something else owns the screen, since turning
+  // the display back on is itself a command.
+  g_serial.pump(now);
+  probe::report("serial", 256);
   probe::begin();
   g_mqtt.tick();
   g_periphery.tick(now);
