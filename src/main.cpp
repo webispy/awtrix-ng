@@ -213,10 +213,10 @@ void setup() {
     digitalWrite(buzzer, LOW);
   }
 
-  // The default RX ring is 256 bytes, which covers 22 ms of traffic at 115200 - less than one
-  // frame period. Has to precede begin().
-  Serial.setRxBufferSize(4096);
-  Serial.begin(115200);
+  // The default ring is 256 bytes, which a streamed frame overruns on its own: at 115200 a loop
+  // that spends 24 ms on a frame has already been sent ~275 more bytes. Has to precede begin().
+  Serial.setRxBufferSize(kSerialRxBufferBytes);
+  Serial.begin(AWTRIX_SERIAL_BAUD);
   Serial.println();
 
   awtrix::noise::reseed(esp_random());
