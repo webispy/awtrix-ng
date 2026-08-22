@@ -569,6 +569,12 @@ void setup() {
       g_scripts->handleButton(g_engine->currentAppId(), kBtnNames[btn]);
     return false;
   });
+  g_periphery.setButtonStateHook([](const ButtonState& before, const ButtonState& after,
+                                    int64_t atMs) {
+    if (before.left != after.left) g_serial.emitButtonEvent("left", after.left, atMs);
+    if (before.select != after.select) g_serial.emitButtonEvent("select", after.select, atMs);
+    if (before.right != after.right) g_serial.emitButtonEvent("right", after.right, atMs);
+  });
   g_display->setPublisher(publisher);
   g_display->setScreen(g_canvas);
 

@@ -44,9 +44,10 @@ The port is found on its own when exactly one candidate is present; pass `--port
 |---|---|
 | `ports` | list candidate serial ports and exit |
 | `ping` | round-trip the link and print the latency |
+| `state` | read capabilities, sensors/battery, and current debounced button states |
 | `text <str>` | show text using the **panel's own font**, which covers Latin-1, Latin Extended-A and Cyrillic and renders anything else as `?` |
 | `clear` | dismiss the notification on screen |
-| `raw <topic> [body]` | send any `cmd/*` topic - the whole [MQTT surface](../../docs/reference/mqtt.md) |
+| `raw <topic> [body]` | send any `cmd/*` topic or documented `qry/*` read |
 | `log` | follow the device log until interrupted |
 | `bench` | stream full frames flat out and report the throughput |
 

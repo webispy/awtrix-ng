@@ -8,7 +8,7 @@ LAN.
 It shares the cable and the baud rate with the boot log, so nothing changes about flashing or
 `pio device monitor`.
 
-A reference client lives in [`tools/serialctl/`](https://github.com/Blueforcer/awtrix-ng/tree/main/tools/serialctl)
+A reference client lives in [`tools/serialctl/`](https://github.com/webispy/awtrix-ng/tree/serial-control/tools/serialctl)
 - it speaks everything below, including the pixel streaming, and its README is the manual.
 
 | | |
@@ -75,6 +75,38 @@ There is no serial-specific command list: the topic is routed by the same code t
 | `cmd/settings {"brightness":40}` | Any [setting](settings.md) |
 | `cmd/apps/next` | Advances the rotation |
 | `cmd/device/reboot` | Reboots |
+
+### Read sensors and buttons
+
+Three serial-only, bodyless queries expose the hardware state without requiring Wi-Fi or MQTT:
+
+| Line | Reply |
+|---|---|
+| `qry/capabilities` | Protocol version, available sensors, supported queries, and whether event delivery or button capture is supported |
+| `qry/sensors` | Temperature, humidity, pressure, light/ADC, and battery readings; unavailable hardware is `null` |
+| `qry/buttons` | Current debounced `left`, `select`, and `right` button states |
+
+They use the same optional sequence prefix as commands:
+
+```text
+#8 qry/sensors
+<<{"seq":8,"temperature":21.5,"humidity":45,"pressureHpa":null,"lightLevel":38.2,"ldrRaw":1410,"batteryPercent":87,"batteryVoltage":4.01,"batteryPinMillivolts":2240,"lowBattery":false}
+```
+
+Protocol version 2 adds pushed, debounced button edges while retaining `qry/buttons` for an initial
+snapshot and recovery from a lost serial byte. Feature-detect it through `events:true` and
+`eventTypes:["button"]`, not a firmware version string:
+
+```text
+<<{"event":"button","button":"select","pressed":true,"atMs":123456}
+<<{"event":"button","button":"select","pressed":false,"atMs":123601}
+```
+
+`atMs` is monotonic device uptime in milliseconds, not Unix time. An event is emitted immediately
+after the 35 ms hardware debounce, once for press and once for release. The names are the physical
+buttons, unaffected by rotation or `swapButtons`; simultaneous changes are emitted left, select,
+then right. `buttonCapture:false` remains explicit: queries and events only observe button state.
+They never consume a press or disable the clock's normal navigation.
 
 !!! note "Text is Latin and Cyrillic only"
     The built-in fonts map Latin-1, Latin Extended-A and Cyrillic. Everything else - CJK, Greek,
@@ -245,7 +277,8 @@ There is no authentication, and there is no setting to switch this off. Anything
 port can drive the panel - which is also true of the flashing path that shares the cable, so the
 trust boundary is physical access to the USB port, not the protocol.
 
-Only `cmd/*` topics and frames are reachable. File, icon and script uploads are not exposed here.
+Only `cmd/*` topics, the documented `qry/*` reads, and frames are reachable. File, icon and script
+uploads are not exposed here.
 
 ---
 

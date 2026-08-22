@@ -4,6 +4,7 @@
 
 #include "core/CoreEngine.h"
 #include "core/api/ApiRouter.h"
+#include "core/api/SerialStateJson.h"
 #include "system/Log.h"
 
 namespace awtrix {
@@ -44,6 +45,10 @@ void SerialApiService::replyError(const char* code, const char* message, long se
   reply(api::errorJson(code, message), seq);
 }
 
+void SerialApiService::emitButtonEvent(const char* button, bool pressed, int64_t atMs) {
+  reply(api::serialButtonEventJson(button, pressed, atMs), -1);
+}
+
 void SerialApiService::pump(int64_t nowMs) {
   if (!engine_) return;
 
@@ -59,6 +64,18 @@ void SerialApiService::pump(int64_t nowMs) {
     switch (proto_.push(static_cast<char>(Serial.read()))) {
       case api::SerialEvent::Command: {
         ++commands;
+        if (proto_.topic() == "qry/sensors") {
+          reply(api::serialSensorsJson(engine_->state().runtime()), proto_.seq());
+          break;
+        }
+        if (proto_.topic() == "qry/buttons") {
+          reply(api::serialButtonsJson(engine_->state().runtime()), proto_.seq());
+          break;
+        }
+        if (proto_.topic() == "qry/capabilities") {
+          reply(api::serialCapabilitiesJson(engine_->state().runtime()), proto_.seq());
+          break;
+        }
         Command cmd;
         std::string immediate;
         switch (api::routeMqtt(proto_.topic(), proto_.body(), cmd, immediate)) {
@@ -112,6 +129,8 @@ void SerialApiService::beginSessionIfStale(int64_t nowMs) {
   // divides a hundred frames by however long the device had been idle beforehand.
   statsStartMs_ = nowMs;
   frames_ = 0;
+  gaps_ = 0;
+  bad_ = 0;
 }
 
 void SerialApiService::noteFrame(int64_t nowMs) {
@@ -119,7 +138,8 @@ void SerialApiService::noteFrame(int64_t nowMs) {
   const long seq = proto_.seq();
   // The host counts frames; a jump in its numbering is the only way we learn that the UART ring
   // overflowed or a payload was cut short, since there is no flow control on this cable.
-  if (lastSeq_ >= 0 && seq >= 0 && seq != lastSeq_ + 1) ++gaps_;
+  const long expected = lastSeq_ == 9999 ? 0 : lastSeq_ + 1;
+  if (lastSeq_ >= 0 && seq >= 0 && seq != expected) ++gaps_;
   lastSeq_ = seq;
 
   if (++frames_ < kStatsEvery) return;
@@ -132,6 +152,8 @@ void SerialApiService::noteFrame(int64_t nowMs) {
   s += ",\"bad\":" + std::to_string(bad_) + "}";
   reply(s, -1);
   frames_ = 0;
+  gaps_ = 0;
+  bad_ = 0;
   statsStartMs_ = nowMs;
 }
 

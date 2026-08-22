@@ -94,6 +94,7 @@ void PeripheryService::tick(int64_t nowMs) {
   if (cur.left != prev_.left || cur.select != prev_.select || cur.right != prev_.right) {
     engine_->state().runtime().buttons = {cur.left, cur.select, cur.right};
     engine_->state().emit(StateEvent::ButtonsChanged);
+    if (buttonStateHook_) buttonStateHook_(prev_, cur, nowMs);
   }
   if (!cfg_->buttonCallback.empty()) {
     if (cur.left != prev_.left) postButton(cfg_->buttonCallback, "left", cur.left, uid_);

@@ -8,6 +8,7 @@
     python tools/serialctl/serialctl.py ports
     python tools/serialctl/serialctl.py text "Hello" --color FF0000
     python tools/serialctl/serialctl.py raw cmd/settings '{"brightness":40}'
+    python tools/serialctl/serialctl.py state
     python tools/serialctl/serialctl.py bench --seconds 10
 
 Reconnecting is off by default and on with --reconnect: a script that grabs the port back in a
@@ -75,6 +76,19 @@ def cmd_ping(args) -> int:
         answered = reply.payload.get("error", {}).get("code") == "notFound"
         print(f"{link.port}  {rtt:.0f} ms  {'ok' if answered else json.dumps(reply.payload)}")
         return 0 if answered else 1
+
+
+def cmd_state(args) -> int:
+    with open_link(args) as link:
+        result = {}
+        for name in ("capabilities", "sensors", "buttons"):
+            reply = link.command("qry/" + name)
+            if not reply.ok:
+                print(json.dumps(reply.payload, ensure_ascii=False), file=sys.stderr)
+                return 1
+            result[name] = reply.payload
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
 
 
 def cmd_text(args) -> int:
@@ -162,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("ports", help="list candidate serial ports").set_defaults(fn=cmd_ports)
     sub.add_parser("ping", help="check the link").set_defaults(fn=cmd_ping)
+    sub.add_parser("state", help="read sensor, battery, and button state").set_defaults(fn=cmd_state)
     sub.add_parser("clear", help="dismiss the notification on screen").set_defaults(fn=cmd_clear)
     sub.add_parser("log", help="follow the device log").set_defaults(fn=cmd_log)
 
@@ -171,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--hold", action="store_true", help="keep it on screen until dismissed")
     t.set_defaults(fn=cmd_text)
 
-    r = sub.add_parser("raw", help="send any cmd/* topic")
+    r = sub.add_parser("raw", help="send any cmd/* or documented qry/* topic")
     r.add_argument("topic")
     r.add_argument("body", nargs="?")
     r.set_defaults(fn=cmd_raw)

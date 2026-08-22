@@ -29,6 +29,9 @@ class SerialApiService {
   // ArtnetService: a hold window rather than a mode, so a sender that stops just goes quiet.
   bool paint(Canvas& out, int64_t nowMs);
 
+  // Emits a debounced physical-button edge independently of command replies.
+  void emitButtonEvent(const char* button, bool pressed, int64_t atMs);
+
   bool streaming(int64_t nowMs) const { return nowMs - lastFrameMs_ < kHoldMs; }
 
  private:

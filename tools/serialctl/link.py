@@ -222,7 +222,10 @@ class Link:
                     continue
                 if doc.get("seq") not in (None, seq):
                     continue
-                return Reply(ok=bool(doc.get("ok")), payload=doc, seq=doc.get("seq"))
+                # Command acknowledgements carry `ok`; query replies carry their data directly.
+                # Absence of `ok` is therefore success unless the firmware returned an error.
+                ok = doc.get("ok", True) is not False and "error" not in doc
+                return Reply(ok=ok, payload=doc, seq=doc.get("seq"))
             time.sleep(0.005)
         raise LinkGone(f"no reply to #{seq} within {self.timeout:g}s")
 
