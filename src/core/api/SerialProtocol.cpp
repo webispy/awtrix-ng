@@ -69,6 +69,9 @@ SerialEvent SerialProtocol::push(char c) {
   if (line_.size() >= maxLine_) {
     line_.clear();
     mode_ = Mode::Discard;
+    // The error belongs to this oversized line, not to the successfully parsed line before it.
+    // finishLine() normally clears the sequence, but an oversized line never reaches it.
+    seq_ = -1;
     return fail("payloadTooLarge", "line exceeds the serial line limit");
   }
   line_.push_back(c);

@@ -105,6 +105,15 @@ void test_oversize_line_errors_once_and_resynchronises() {
   TEST_ASSERT_EQUAL_STRING("cmd/x", p.topic().c_str());
 }
 
+void test_oversize_line_does_not_borrow_the_previous_sequence() {
+  api::SerialProtocol p(16);
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Command), ev(feed(p, "#7 cmd/x\n")));
+  TEST_ASSERT_EQUAL_INT(7, static_cast<int>(p.seq()));
+
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, std::string(17, 'x'))));
+  TEST_ASSERT_EQUAL_INT(-1, static_cast<int>(p.seq()));
+}
+
 void test_full_frame_payload_is_read_by_count() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
@@ -207,6 +216,7 @@ int main(int, char**) {
   RUN_TEST(test_crlf_and_blank_lines_are_tolerated);
   RUN_TEST(test_byte_at_a_time_and_batched_arrival_agree);
   RUN_TEST(test_oversize_line_errors_once_and_resynchronises);
+  RUN_TEST(test_oversize_line_does_not_borrow_the_previous_sequence);
   RUN_TEST(test_full_frame_payload_is_read_by_count);
   RUN_TEST(test_delta_frame_uses_five_byte_records);
   RUN_TEST(test_frame_lengths_that_do_not_divide_into_pixels_are_rejected);
