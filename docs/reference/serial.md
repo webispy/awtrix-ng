@@ -76,15 +76,16 @@ There is no serial-specific command list: the topic is routed by the same code t
 | `cmd/apps/next` | Advances the rotation |
 | `cmd/device/reboot` | Reboots |
 
-### Read sensors and buttons
+### Read device state
 
-Three serial-only, bodyless queries expose the hardware state without requiring Wi-Fi or MQTT:
+Four serial-only, bodyless queries expose the hardware state without requiring Wi-Fi or MQTT:
 
 | Line | Reply |
 |---|---|
 | `qry/capabilities` | Protocol version, available sensors, supported queries, and whether event delivery or button capture is supported |
 | `qry/sensors` | Temperature, humidity, pressure, light/ADC, and battery readings; unavailable hardware is `null` |
 | `qry/buttons` | Current debounced `left`, `select`, and `right` button states |
+| `qry/display` | Configured `brightness`, effective `brightnessActual`, `autoBrightness` mode, and display `gamma` |
 
 They use the same optional sequence prefix as commands:
 

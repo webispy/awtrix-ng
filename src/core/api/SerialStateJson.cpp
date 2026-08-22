@@ -1,6 +1,7 @@
 #include "core/api/SerialStateJson.h"
 
 #include "core/RuntimeState.h"
+#include "core/Settings.h"
 #include "core/api/JsonWriter.h"
 
 namespace awtrix::api {
@@ -57,6 +58,18 @@ std::string serialButtonsJson(const RuntimeState& s) {
   return out;
 }
 
+std::string serialDisplayJson(const Settings& settings, const RuntimeState& state) {
+  std::string out;
+  JsonWriter w(out);
+  w.beginObject();
+  w.member("brightness", settings.brightness);
+  w.member("brightnessActual", state.brightnessActual);
+  w.member("autoBrightness", settings.autoBrightness);
+  w.member("gamma", settings.gamma, 2);
+  w.endObject();
+  return out;
+}
+
 std::string serialCapabilitiesJson(const RuntimeState& s) {
   std::string out;
   out.reserve(256);
@@ -68,6 +81,11 @@ std::string serialCapabilitiesJson(const RuntimeState& s) {
   w.value("qry/capabilities");
   w.value("qry/sensors");
   w.value("qry/buttons");
+  w.value("qry/display");
+  w.endArray();
+  w.key("controls");
+  w.beginArray();
+  w.value("brightness");
   w.endArray();
   w.key("sensors");
   w.beginObject();

@@ -72,6 +72,11 @@ void SerialApiService::pump(int64_t nowMs) {
           reply(api::serialButtonsJson(engine_->state().runtime()), proto_.seq());
           break;
         }
+        if (proto_.topic() == "qry/display") {
+          reply(api::serialDisplayJson(engine_->state().settings(), engine_->state().runtime()),
+                proto_.seq());
+          break;
+        }
         if (proto_.topic() == "qry/capabilities") {
           reply(api::serialCapabilitiesJson(engine_->state().runtime()), proto_.seq());
           break;

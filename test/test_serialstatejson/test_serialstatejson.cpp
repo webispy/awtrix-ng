@@ -1,6 +1,7 @@
 #include <unity.h>
 
 #include "core/RuntimeState.h"
+#include "core/Settings.h"
 #include "core/api/SerialStateJson.h"
 
 using namespace awtrix;
@@ -34,6 +35,17 @@ static void test_button_query_uses_physical_state() {
                            api::serialButtonsJson(s).c_str());
 }
 
+static void test_display_query_reports_configured_and_effective_brightness() {
+  Settings settings;
+  settings.brightness = 73;
+  settings.autoBrightness = true;
+  RuntimeState state;
+  state.brightnessActual = 41;
+  TEST_ASSERT_EQUAL_STRING(
+      "{\"brightness\":73,\"brightnessActual\":41,\"autoBrightness\":true,\"gamma\":1.9}",
+      api::serialDisplayJson(settings, state).c_str());
+}
+
 static void test_capabilities_advertise_button_events_without_capture() {
   RuntimeState s;
   s.hasTemperature = true;
@@ -42,7 +54,8 @@ static void test_capabilities_advertise_button_events_without_capture() {
   s.hasLightSensor = false;
   s.hasBattery = true;
   TEST_ASSERT_EQUAL_STRING(
-      "{\"protocol\":2,\"queries\":[\"qry/capabilities\",\"qry/sensors\",\"qry/buttons\"],"
+      "{\"protocol\":2,\"queries\":[\"qry/capabilities\",\"qry/sensors\",\"qry/buttons\","
+      "\"qry/display\"],\"controls\":[\"brightness\"],"
       "\"sensors\":{\"temperature\":true,\"humidity\":false,\"pressure\":true,"
       "\"light\":false,\"battery\":true},\"events\":true,\"eventTypes\":[\"button\"],"
       "\"buttonCapture\":false}",
@@ -59,6 +72,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_sensor_query_reports_values_and_unavailable_inputs_as_null);
   RUN_TEST(test_button_query_uses_physical_state);
+  RUN_TEST(test_display_query_reports_configured_and_effective_brightness);
   RUN_TEST(test_capabilities_advertise_button_events_without_capture);
   RUN_TEST(test_button_event_reports_edge_and_monotonic_device_time);
   return UNITY_END();
