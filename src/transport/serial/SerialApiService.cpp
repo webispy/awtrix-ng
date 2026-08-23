@@ -56,8 +56,12 @@ void SerialApiService::pump(int64_t nowMs) {
   int commands = 0;
 
   while (Serial.available() > 0) {
-    if (budget <= 0 && !proto_.awaitingFrame()) break;
-    if (commands >= kCommandsPerTick) break;
+    // Both ceilings exempt a frame in progress, for the same reason: stopping between a frame's
+    // header and its last byte leaves the parser holding a fragment that the 200 ms idle timer
+    // will throw away if anything delays the next pass - and a discarded frame is a lost frame,
+    // which is exactly what this channel cannot report cheaply. A frame is bounded by its own
+    // declared length, so finishing one is always finite work.
+    if (!proto_.awaitingFrame() && (budget <= 0 || commands >= kCommandsPerTick)) break;
     --budget;
     lastByteMs_ = nowMs;
 
@@ -212,8 +216,11 @@ bool SerialApiService::paint(Canvas& out, int64_t nowMs) {
     if (!frame_.empty()) frame_.clear();
     return false;
   }
-  if (static_cast<int>(frame_.size()) == total)
-    for (int p = 0; p < total; ++p) out.setPixel(p % out.width(), p / out.width(), frame_[p]);
+  // Nothing held: say so rather than claiming the screen. Returning true here handed the panel to
+  // a stream with no pixels in it, and the apps stood down for the whole five-second hold window -
+  // a blank display, which is what a reconfigured panel used to show for five seconds.
+  if (static_cast<int>(frame_.size()) != total) return false;
+  for (int p = 0; p < total; ++p) out.setPixel(p % out.width(), p / out.width(), frame_[p]);
   return true;
 }
 
