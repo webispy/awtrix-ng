@@ -59,8 +59,14 @@ number them:
 <<{"seq":7,"ok":true}
 ```
 
-The number is optional and is remembered for one line only. Keep it under 1,000,000; wrapping at
-10,000 is plenty.
+The number is optional and is remembered for one line only. Keep it under 1,000,000.
+
+For **frames** the number is not optional in practice, because it is what lets AWTRIX tell you a
+frame went missing. Increment it by one per frame and wrap wherever you like - 10,000 keeps it four
+digits wide, which is worth a byte or two a frame. A wrap is recognised by the number not advancing,
+so any wrap point works. (It did not always: the receiver compared against a literal 10,000 while
+this page called it a suggestion, so a sender wrapping anywhere else scored one phantom lost frame
+per cycle.)
 
 ### What the commands are
 
@@ -206,9 +212,30 @@ Every 100 frames AWTRIX reports what it actually achieved, which is the number w
 <<{"stat":"stream","fps":14,"frames":100,"gaps":0,"bad":0}
 ```
 
-`gaps` counts breaks in your `seq` numbering - the only way this cable can tell you that a frame
-was dropped, since it carries no flow control. Frames are deliberately **not** acknowledged one by
-one: a round trip per frame would cost more than the frame does.
+`gaps` counts breaks in your `seq` numbering and `bad` counts frames that were refused outright -
+between them the only way this cable can tell you a frame did not arrive, since it carries no flow
+control. Frames are deliberately **not** acknowledged one by one: a round trip per frame would cost
+more than the frame does.
+
+### A lost frame is told at once
+
+The throughput line above is a summary. A break in your numbering also gets its own notice, the
+moment it is seen:
+
+```text
+<<{"stat":"gap","expected":412,"got":414,"missed":3}
+```
+
+`expected` is the number that should have come next, `got` is what did, and `missed` is the running
+count for this window. At most one of these is sent every 500 ms, so a cable that has genuinely
+fallen apart does not spend what capacity it has left telling you so.
+
+**If you stream deltas, you must act on this.** A `!D` frame describes the difference from what the
+panel is holding, so a frame that never arrived leaves your idea of the panel and the panel itself
+permanently disagreeing - and every delta after it inherits the error. Send one `!F` and the two
+agree again. Waiting for the hundred-frame summary is far too late, which is why this notice exists.
+
+A sender that only ever writes `!F` can ignore it: the next frame repaints everything anyway.
 
 Two other things streaming does not control, exactly as with Art-Net: **brightness** (including
 auto-brightness, which will dim your frames as the room darkens) and the **colour pipeline**

@@ -46,8 +46,11 @@ class SerialApiService {
   static constexpr int kBytesPerTick = 1024;
   static constexpr int kCommandsPerTick = 4;
   // Frames are not acknowledged one by one - the round trip would cost more than the frame - so
-  // throughput is reported in batches instead.
+  // throughput is reported in batches instead. A *lost* frame is not batched: see noteFrame.
   static constexpr uint32_t kStatsEvery = 100;
+  // The floor between two `gap` notices. One is all a sender needs to resynchronise, and a cable
+  // that has genuinely fallen apart must not have its remaining capacity spent telling us so.
+  static constexpr int64_t kGapNoticeMs = 500;
 
   void reply(const std::string& json, long seq);
   void replyError(const char* code, const char* message, long seq);
@@ -67,6 +70,7 @@ class SerialApiService {
   uint32_t gaps_ = 0;
   uint32_t bad_ = 0;
   long lastSeq_ = -1;
+  int64_t lastGapMs_ = -100000;
 };
 
 }

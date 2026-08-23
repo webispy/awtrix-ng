@@ -21,6 +21,32 @@ namespace api {
 // The frame header is ASCII so it parses as an ordinary line; only its payload is binary, read by
 // count rather than by delimiter. Empty lines are ignored, which is what lets a sender write a
 // bare newline to resynchronise after a reconnect.
+// The frame counter both ends keep, and the one number in this protocol that neither end can check
+// on its own. A host numbers its frames and wraps somewhere; this end notices a number it did not
+// expect and reports it, because a cable with no flow control has no other way to say "I never got
+// that one".
+//
+// Wrapping is detected by the number going *down*, not by comparing against a constant. That was
+// how this worked and it was a trap: the wrap point lived as a literal in the receiver while the
+// docs called it a suggestion, so a host that wrapped anywhere else scored one phantom lost frame
+// per cycle - silently, in a counter nobody could tie back to a cause. Any wrap point now works,
+// and the only case missed is a real loss that happens to straddle one.
+//
+// This value is what the tools and docs recommend, not a rule the parser enforces: it keeps the
+// number four digits wide on the wire, which is worth a byte or two a frame at these rates.
+inline constexpr long kSeqWrap = 10000;
+
+// Whether no frame is missing between `previous` and `seq`.
+//
+// The question is only ever "was something lost", so the three ways of not having lost anything are
+// all true here: nothing counted yet (`previous` below zero), the next number, or a number that did
+// not advance - a wrap, or a sender that repeated itself. A repeat is a sender bug rather than a
+// lost frame, and answering "lost" to it would have a driver resend a whole frame to repair pixels
+// that were never wrong.
+inline constexpr bool seqFollows(long previous, long seq) {
+  return previous < 0 || seq <= previous || seq == previous + 1;
+}
+
 enum class SerialEvent : uint8_t {
   None,
   Command,

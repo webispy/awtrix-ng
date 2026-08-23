@@ -135,7 +135,9 @@ void SerialApiService::beginSessionIfStale(int64_t nowMs) {
   statsStartMs_ = nowMs;
   frames_ = 0;
   gaps_ = 0;
-  bad_ = 0;
+  // `bad_` deliberately survives. It counts malformed input, which arrives *before* a session can
+  // begin - a sender with the wrong frame length never gets one started - so zeroing it here threw
+  // away the count at precisely the moment it was the only clue on the wire.
 }
 
 void SerialApiService::noteFrame(int64_t nowMs) {
@@ -143,8 +145,22 @@ void SerialApiService::noteFrame(int64_t nowMs) {
   const long seq = proto_.seq();
   // The host counts frames; a jump in its numbering is the only way we learn that the UART ring
   // overflowed or a payload was cut short, since there is no flow control on this cable.
-  const long expected = lastSeq_ == 9999 ? 0 : lastSeq_ + 1;
-  if (lastSeq_ >= 0 && seq >= 0 && seq != expected) ++gaps_;
+  if (seq >= 0 && !api::seqFollows(lastSeq_, seq)) {
+    ++gaps_;
+    // Said at once, and with both numbers in it. Folding this into the hundred-frame throughput
+    // line meant a sender learned it had lost a frame up to a hundred frames later - far too late
+    // to repair anything, and with no way to tell where. A driver streaming deltas has to know
+    // immediately: until it resends a whole frame, everything it computes is against pixels this
+    // panel does not have.
+    if (nowMs - lastGapMs_ >= kGapNoticeMs) {
+      lastGapMs_ = nowMs;
+      std::string s = "{\"stat\":\"gap\",\"expected\":";
+      s += std::to_string(lastSeq_ + 1);
+      s += ",\"got\":" + std::to_string(seq);
+      s += ",\"missed\":" + std::to_string(gaps_) + "}";
+      reply(s, -1);
+    }
+  }
   lastSeq_ = seq;
 
   if (++frames_ < kStatsEvery) return;

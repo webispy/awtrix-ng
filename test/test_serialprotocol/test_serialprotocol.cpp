@@ -199,6 +199,23 @@ void test_idle_timeout_drops_a_partial_frame() {
   TEST_ASSERT_EQUAL_UINT8(0x01, p.frame()[0]);
 }
 
+// The frame counter's contract, which neither end can verify alone. A receiver that compared
+// against a hardcoded wrap point scored one phantom loss per cycle against any host that wrapped
+// elsewhere - so what is pinned here is that *any* wrap point works.
+void test_sequence_numbering_follows_or_wraps() {
+  TEST_ASSERT_TRUE(api::seqFollows(41, 42));            // the ordinary case
+  TEST_ASSERT_FALSE(api::seqFollows(41, 43));           // one frame lost
+  TEST_ASSERT_FALSE(api::seqFollows(41, 141));          // a hundred lost
+  TEST_ASSERT_TRUE(api::seqFollows(-1, 7));             // nothing counted yet is never a gap
+  TEST_ASSERT_TRUE(api::seqFollows(41, 41));            // a repeat is not a gap either
+
+  // Every wrap point a host might pick, including the recommended one, and one that is not.
+  TEST_ASSERT_TRUE(api::seqFollows(api::kSeqWrap - 1, 0));
+  TEST_ASSERT_TRUE(api::seqFollows(65535, 0));
+  TEST_ASSERT_TRUE(api::seqFollows(255, 0));
+  TEST_ASSERT_TRUE(api::seqFollows(999999, 1));
+}
+
 void test_frames_are_refused_before_a_canvas_size_is_known() {
   api::SerialProtocol p;
   TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("F", 0, 3))));
@@ -225,5 +242,6 @@ int main(int, char**) {
   RUN_TEST(test_idle_timeout_drops_a_partial_line);
   RUN_TEST(test_idle_timeout_drops_a_partial_frame);
   RUN_TEST(test_frames_are_refused_before_a_canvas_size_is_known);
+  RUN_TEST(test_sequence_numbering_follows_or_wraps);
   return UNITY_END();
 }
