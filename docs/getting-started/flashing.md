@@ -122,10 +122,12 @@ python -m esptool --chip esp32 --port COM5 --baud 460800 write_flash 0x0 usb-awt
 Use `--chip esp32s3` for an S3 board. When it finishes it prints `Hash of data verified.` If it
 never gets that far, [When it goes wrong](#when-it-goes-wrong) lists what usually stops it.
 
-!!! warning "Do not raise the baud rate to 921600"
+!!! warning "High baud rates can fail on the TC001 USB bridge"
     A write at 921600 aborts partway on the USB-serial bridge a TC001 uses. The chip has been
-    erased by then, so it is left half-written and will not boot. Repeat the write at
-    `--baud 460800`.
+    erased by then, so it is left half-written and will not boot. Drop to `--baud 460800` - and if
+    that also stalls or resets mid-write, as some TC001 bridges do, fall back to `--baud 115200`.
+    It is slow but reliable on every unit seen; treat it as the safe default when a board's bridge
+    is unknown.
 
 What this does to AWTRIX:
 

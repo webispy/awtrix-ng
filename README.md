@@ -23,6 +23,17 @@ or skip the middleman entirely and **run your app on the device itself.**
 
 ---
 
+> **This is the `serial-control` branch.** On top of upstream AWTRIX NG it adds a USB serial command
+> and framebuffer channel, so a host can drive the panel *and* query its sensors, buttons and
+> display over the cable with no network at all — see
+> [`docs/reference/serial.md`](docs/reference/serial.md). It is the firmware half of a three-part
+> system: [`pixelwire`](https://github.com/webispy/pixelwire) is a host daemon that owns the serial
+> port and composites layers onto the panel, and
+> [`awtrix-agents`](https://github.com/webispy/awtrix-agents) is a Claude Code / Codex plugin that
+> shows coding-agent session state on the panel through pixelwire.
+
+---
+
 AWTRIX NG turns an inexpensive LED-matrix clock into a small networked screen for your home. It
 shows time, date, temperature, humidity and battery out of the box, and then does whatever you
 tell it - scroll a message, draw a chart, play a melody, flash an alert when the doorbell rings.
