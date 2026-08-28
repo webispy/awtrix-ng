@@ -35,10 +35,13 @@ void SerialApiService::begin(CoreEngine& engine, int totalPixels) {
 }
 
 void SerialApiService::reply(const std::string& json, long seq) {
-  const std::string line = withSeq(json, seq);
-  Serial.write("<<", 2);
+  // One Serial.write for the whole framed line. Split across three (marker, payload, newline), a
+  // log line from another task - arduino-esp32 takes the UART lock per call, not per reply - could
+  // land between them and split a reply the host reads a line at a time.
+  std::string line = "<<";
+  line += withSeq(json, seq);
+  line += '\n';
   Serial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
-  Serial.write('\n');
 }
 
 void SerialApiService::replyError(const char* code, const char* message, long seq) {
