@@ -75,7 +75,7 @@ std::string serialCapabilitiesJson(const RuntimeState& s) {
   out.reserve(256);
   JsonWriter w(out);
   w.beginObject();
-  w.member("protocol", 2);
+  w.member("protocol", 3);
   w.key("queries");
   w.beginArray();
   w.value("qry/capabilities");

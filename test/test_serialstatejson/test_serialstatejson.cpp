@@ -54,7 +54,7 @@ static void test_capabilities_advertise_button_events_without_capture() {
   s.hasLightSensor = false;
   s.hasBattery = true;
   TEST_ASSERT_EQUAL_STRING(
-      "{\"protocol\":2,\"queries\":[\"qry/capabilities\",\"qry/sensors\",\"qry/buttons\","
+      "{\"protocol\":3,\"queries\":[\"qry/capabilities\",\"qry/sensors\",\"qry/buttons\","
       "\"qry/display\"],\"controls\":[\"brightness\"],"
       "\"sensors\":{\"temperature\":true,\"humidity\":false,\"pressure\":true,"
       "\"light\":false,\"battery\":true},\"events\":true,\"eventTypes\":[\"button\"],"

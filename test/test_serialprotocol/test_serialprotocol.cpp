@@ -13,6 +13,7 @@ void tearDown() {}
 namespace {
 
 int ev(api::SerialEvent e) { return static_cast<int>(e); }
+int ev2(api::FrameFault f) { return static_cast<int>(f); }
 
 // Feeds a string one byte at a time and returns the last event that was not None, so a test reads
 // as "what did this input produce" rather than as a loop.
@@ -25,8 +26,16 @@ api::SerialEvent feed(api::SerialProtocol& p, const std::string& in) {
   return last;
 }
 
-std::string header(const char* kind, int seq, std::size_t len) {
-  return std::string("!") + kind + std::to_string(seq) + ":" + std::to_string(len) + "\n";
+std::string header(int seq, std::size_t len) {
+  return "!P" + std::to_string(seq) + ":" + std::to_string(len) + "\n";
+}
+
+// A payload with its checksum on the end, which is how every legal frame arrives.
+std::string framed(std::vector<uint8_t> body) {
+  const uint16_t crc = api::crc16(body.data(), body.size());
+  body.push_back(static_cast<uint8_t>(crc & 0xff));
+  body.push_back(static_cast<uint8_t>(crc >> 8));
+  return std::string(body.begin(), body.end());
 }
 
 void test_command_line_splits_topic_and_body() {
@@ -114,10 +123,10 @@ void test_oversize_line_does_not_borrow_the_previous_sequence() {
   TEST_ASSERT_EQUAL_INT(-1, static_cast<int>(p.seq()));
 }
 
-void test_full_frame_payload_is_read_by_count() {
+void test_frame_payload_is_read_by_count() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header("F", 3, 6))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header(3, 6))));
   TEST_ASSERT_TRUE(p.awaitingFrame());
   TEST_ASSERT_EQUAL_UINT32(6, p.framePending());
 
@@ -134,41 +143,120 @@ void test_full_frame_payload_is_read_by_count() {
   TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Command), ev(feed(p, "cmd/apps/next\n")));
 }
 
-void test_delta_frame_uses_five_byte_records() {
-  api::SerialProtocol p;
-  p.setMaxFrame(1280);
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header("D", 1, 10))));
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Delta), ev(feed(p, std::string(10, '\x7F'))));
-  TEST_ASSERT_EQUAL_UINT32(10, p.frame().size());
+// Both ends compute this independently over every frame, so it is pinned against the published
+// check value for CRC-16/CCITT-FALSE rather than against whatever this implementation happens to
+// produce.
+void test_checksum_matches_the_published_check_value() {
+  const uint8_t check[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  TEST_ASSERT_EQUAL_UINT16(0x29b1, api::crc16(check, sizeof(check)));
+  TEST_ASSERT_EQUAL_UINT16(0xffff, api::crc16(nullptr, 0));
+
+  // Leading zeroes are part of the payload, not padding: a checksum that skipped them would pass a
+  // frame whose first pixels were lost.
+  const uint8_t zeroes[] = {0, 0, 0, 1};
+  TEST_ASSERT_NOT_EQUAL(api::crc16(zeroes, sizeof(zeroes)), api::crc16(zeroes + 3, 1));
 }
 
-void test_frame_lengths_that_do_not_divide_into_pixels_are_rejected() {
+// The payload's own length is the parser's business only as far as "could this be a frame at all".
+// What each layout means is checkFrame's, and is tested against a canvas below.
+void test_frame_too_short_to_carry_a_layout_and_a_checksum_is_rejected() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("F", 0, 7))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header(0, 2))));
   TEST_ASSERT_FALSE(p.awaitingFrame());
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("D", 0, 12))));
-  TEST_ASSERT_FALSE(p.awaitingFrame());
+  TEST_ASSERT_EQUAL_STRING("payloadTooLarge", p.error());
+
+  // Three bytes is the hold frame: a layout, no pixels, and the checksum.
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header(0, 3))));
+  TEST_ASSERT_TRUE(p.awaitingFrame());
+}
+
+void test_a_corrupt_frame_is_refused_rather_than_painted() {
+  uint32_t canvas[4] = {0, 0, 0, 0};
+  std::string frame = framed({0x00, 0xff, 0xff, 0x1f, 0x00, 0xe0, 0x07, 0x00, 0xf8});
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(frame.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::None), ev2(api::checkFrame(bytes, frame.size(), 4)));
+
+  // One bit of one colour, which is what a cable flips and what a length check cannot see.
+  frame[3] = static_cast<char>(frame[3] ^ 0x01);
+  bytes = reinterpret_cast<const uint8_t*>(frame.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Checksum),
+                        ev2(api::checkFrame(bytes, frame.size(), 4)));
+  TEST_ASSERT_EQUAL_UINT32(0, canvas[0]);
+}
+
+// Five-six-five in, eight-eight-eight out, with the high bits replicated: white has to survive the
+// round trip or every full-brightness pixel on the panel is a shade off.
+void test_layouts_paint_the_pixels_they_name() {
+  uint32_t canvas[4] = {1, 2, 3, 4};
+  const std::string full = framed({0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0xf8, 0xe0, 0x07});
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(full.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::None), ev2(api::checkFrame(bytes, full.size(), 4)));
+  api::applyFrame(bytes, full.size(), 4, canvas);
+  TEST_ASSERT_EQUAL_HEX32(0xffffff, canvas[0]);
+  TEST_ASSERT_EQUAL_HEX32(0x000000, canvas[1]);
+  TEST_ASSERT_EQUAL_HEX32(0xff0000, canvas[2]);
+  TEST_ASSERT_EQUAL_HEX32(0x00ff00, canvas[3]);
+
+  // An index and a colour: pixel 1 only, and everything else left where it was.
+  const std::string indexed = framed({0x01, 0x01, 0x1f, 0x00});
+  bytes = reinterpret_cast<const uint8_t*>(indexed.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::None), ev2(api::checkFrame(bytes, indexed.size(), 4)));
+  api::applyFrame(bytes, indexed.size(), 4, canvas);
+  TEST_ASSERT_EQUAL_HEX32(0x0000ff, canvas[1]);
+  TEST_ASSERT_EQUAL_HEX32(0xffffff, canvas[0]);
+
+  // A bitmap of pixels 0 and 3, then their two colours in index order.
+  const std::string masked = framed({0x02, 0x09, 0x00, 0xf8, 0x1f, 0x00});
+  bytes = reinterpret_cast<const uint8_t*>(masked.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::None), ev2(api::checkFrame(bytes, masked.size(), 4)));
+  api::applyFrame(bytes, masked.size(), 4, canvas);
+  TEST_ASSERT_EQUAL_HEX32(0xff0000, canvas[0]);
+  TEST_ASSERT_EQUAL_HEX32(0x0000ff, canvas[3]);
+  TEST_ASSERT_EQUAL_HEX32(0x0000ff, canvas[1]);
+
+  // A hold frame: no pixels at all, which is what a still panel sends to keep the display.
+  const std::string hold = framed({0x01});
+  bytes = reinterpret_cast<const uint8_t*>(hold.data());
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::None), ev2(api::checkFrame(bytes, hold.size(), 4)));
+  api::applyFrame(bytes, hold.size(), 4, canvas);
+  TEST_ASSERT_EQUAL_HEX32(0xff0000, canvas[0]);
+}
+
+void test_lengths_that_no_layout_can_explain_are_refused() {
+  auto fault = [](std::vector<uint8_t> body, std::size_t total) {
+    const std::string f = framed(std::move(body));
+    return api::checkFrame(reinterpret_cast<const uint8_t*>(f.data()), f.size(), total);
+  };
+  // A full frame is two bytes a pixel, exactly - one short would paint half a canvas.
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Length), ev2(fault({0x00, 0xff, 0xff}, 4)));
+  // Indexed records are three bytes each.
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Length), ev2(fault({0x01, 0x01, 0x1f}, 4)));
+  // A mask promising two colours and carrying one.
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Length), ev2(fault({0x02, 0x09, 0x00, 0xf8}, 4)));
+  // And a bitmap the canvas is too big for.
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Length), ev2(fault({0x02}, 4)));
+  TEST_ASSERT_EQUAL_INT(ev2(api::FrameFault::Layout), ev2(fault({0x07}, 4)));
 }
 
 void test_frame_over_the_ceiling_is_rejected_without_reserving() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("F", 0, 900))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header(0, 900))));
   TEST_ASSERT_EQUAL_STRING("payloadTooLarge", p.error());
   TEST_ASSERT_FALSE(p.awaitingFrame());
 
   // A zero-length frame is a malformed header, not an empty update.
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("F", 0, 0))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header(0, 0))));
 }
 
 void test_malformed_frame_headers_are_rejected() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!F768\n")));
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!F1:\n")));
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!Fx:768\n")));
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!F1:76a\n")));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!P768\n")));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!P1:\n")));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!Px:768\n")));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, "!P1:76a\n")));
   TEST_ASSERT_FALSE(p.awaitingFrame());
 }
 
@@ -187,14 +275,14 @@ void test_idle_timeout_drops_a_partial_line() {
 void test_idle_timeout_drops_a_partial_frame() {
   api::SerialProtocol p;
   p.setMaxFrame(768);
-  feed(p, header("F", 5, 6));
+  feed(p, header(5, 6));
   feed(p, std::string(3, '\x11'));
   TEST_ASSERT_TRUE(p.awaitingFrame());
   TEST_ASSERT_TRUE(p.expire(500, 100, 200));
   TEST_ASSERT_FALSE(p.awaitingFrame());
 
   // The three orphaned payload bytes are gone, so the next frame is whole rather than shifted.
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header("F", 6, 3))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::None), ev(feed(p, header(6, 3))));
   TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Frame), ev(feed(p, std::string("\x01\x02\x03", 3))));
   TEST_ASSERT_EQUAL_UINT8(0x01, p.frame()[0]);
 }
@@ -218,7 +306,7 @@ void test_sequence_numbering_follows_or_wraps() {
 
 void test_frames_are_refused_before_a_canvas_size_is_known() {
   api::SerialProtocol p;
-  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header("F", 0, 3))));
+  TEST_ASSERT_EQUAL_INT(ev(api::SerialEvent::Error), ev(feed(p, header(0, 3))));
   TEST_ASSERT_FALSE(p.awaitingFrame());
 }
 
@@ -234,9 +322,12 @@ int main(int, char**) {
   RUN_TEST(test_byte_at_a_time_and_batched_arrival_agree);
   RUN_TEST(test_oversize_line_errors_once_and_resynchronises);
   RUN_TEST(test_oversize_line_does_not_borrow_the_previous_sequence);
-  RUN_TEST(test_full_frame_payload_is_read_by_count);
-  RUN_TEST(test_delta_frame_uses_five_byte_records);
-  RUN_TEST(test_frame_lengths_that_do_not_divide_into_pixels_are_rejected);
+  RUN_TEST(test_frame_payload_is_read_by_count);
+  RUN_TEST(test_checksum_matches_the_published_check_value);
+  RUN_TEST(test_frame_too_short_to_carry_a_layout_and_a_checksum_is_rejected);
+  RUN_TEST(test_a_corrupt_frame_is_refused_rather_than_painted);
+  RUN_TEST(test_layouts_paint_the_pixels_they_name);
+  RUN_TEST(test_lengths_that_no_layout_can_explain_are_refused);
   RUN_TEST(test_frame_over_the_ceiling_is_rejected_without_reserving);
   RUN_TEST(test_malformed_frame_headers_are_rejected);
   RUN_TEST(test_idle_timeout_drops_a_partial_line);

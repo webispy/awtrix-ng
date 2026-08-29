@@ -28,9 +28,10 @@ std::string withSeq(const std::string& json, long seq) {
 void SerialApiService::begin(CoreEngine& engine, int totalPixels) {
   engine_ = &engine;
   total_ = totalPixels;
-  // Five bytes is the delta record; a full frame needs three per pixel and is bounded again where
-  // it is applied, so one ceiling covers both shapes.
-  proto_.setMaxFrame(totalPixels > 0 ? static_cast<std::size_t>(totalPixels) * 5u : 0u);
+  // The largest legal payload is an indexed frame naming every pixel: three bytes each, plus the
+  // layout byte and the checksum. Nothing sensible sends that - a full frame is two bytes a pixel -
+  // but the ceiling has to admit it, and each layout is measured exactly where it is applied.
+  proto_.setMaxFrame(totalPixels > 0 ? static_cast<std::size_t>(totalPixels) * 3u + 3u : 0u);
   logf("serial: control channel ready (%d px)", totalPixels);
 }
 
@@ -108,11 +109,7 @@ void SerialApiService::pump(int64_t nowMs) {
       }
 
       case api::SerialEvent::Frame:
-        applyFull(nowMs);
-        break;
-
-      case api::SerialEvent::Delta:
-        applyDelta(nowMs);
+        applyFrame(nowMs);
         break;
 
       case api::SerialEvent::Error:
@@ -159,8 +156,8 @@ void SerialApiService::noteFrame(int64_t nowMs) {
     // to repair anything, and with no way to tell where. A driver streaming deltas has to know
     // immediately: until it resends a whole frame, everything it computes is against pixels this
     // panel does not have.
-    if (nowMs - lastGapMs_ >= kGapNoticeMs) {
-      lastGapMs_ = nowMs;
+    if (nowMs - lastNoticeMs_ >= kNoticeMs) {
+      lastNoticeMs_ = nowMs;
       std::string s = "{\"stat\":\"gap\",\"expected\":";
       s += std::to_string(lastSeq_ + 1);
       s += ",\"got\":" + std::to_string(seq);
@@ -185,25 +182,37 @@ void SerialApiService::noteFrame(int64_t nowMs) {
   statsStartMs_ = nowMs;
 }
 
-void SerialApiService::applyFull(int64_t nowMs) {
-  beginSessionIfStale(nowMs);
+// One frame, whichever way it spells its pixels out. What each layout means and what makes one
+// legal is `api::checkFrame`, which is pure and unit-tested on the host; what is here is only what
+// this end knows: whether the stream had lapsed, and who has to be told.
+void SerialApiService::applyFrame(int64_t nowMs) {
   const std::vector<uint8_t>& in = proto_.frame();
-  const std::size_t pixels = in.size() / 3;
-  for (std::size_t p = 0; p < pixels && p < frame_.size(); ++p)
-    frame_[p] = (static_cast<uint32_t>(in[p * 3]) << 16) |
-                (static_cast<uint32_t>(in[p * 3 + 1]) << 8) | in[p * 3 + 2];
-  noteFrame(nowMs);
-}
+  const std::size_t total = total_ > 0 ? static_cast<std::size_t>(total_) : 0u;
+  const api::FrameFault fault = api::checkFrame(in.data(), in.size(), total);
 
-void SerialApiService::applyDelta(int64_t nowMs) {
-  beginSessionIfStale(nowMs);
-  const std::vector<uint8_t>& in = proto_.frame();
-  for (std::size_t r = 0; r + 4 < in.size(); r += 5) {
-    const std::size_t p = static_cast<std::size_t>(in[r]) | (static_cast<std::size_t>(in[r + 1]) << 8);
-    if (p >= frame_.size()) continue;
-    frame_[p] = (static_cast<uint32_t>(in[r + 2]) << 16) |
-                (static_cast<uint32_t>(in[r + 3]) << 8) | in[r + 4];
+  if (fault == api::FrameFault::Checksum) {
+    ++bad_;
+    // Deliberately not adopting the sequence number: a frame that failed its checksum is a frame
+    // that did not arrive, and letting the numbering notice the hole on its own is what makes the
+    // host resynchronise even if this notice is itself lost. The two share a throttle, so the same
+    // frame is not reported twice.
+    if (nowMs - lastNoticeMs_ >= kNoticeMs) {
+      lastNoticeMs_ = nowMs;
+      std::string s = "{\"stat\":\"crc\",\"seq\":";
+      s += std::to_string(proto_.seq());
+      s += ",\"bad\":" + std::to_string(bad_) + "}";
+      reply(s, -1);
+    }
+    return;
   }
+  if (fault != api::FrameFault::None) {
+    ++bad_;
+    replyError("invalidRequest", api::frameFaultMessage(fault), proto_.seq());
+    return;
+  }
+
+  beginSessionIfStale(nowMs);
+  api::applyFrame(in.data(), in.size(), total, frame_.data());
   noteFrame(nowMs);
 }
 
@@ -212,7 +221,7 @@ bool SerialApiService::paint(Canvas& out, int64_t nowMs) {
   if (total != total_) {
     // The panel was reconfigured under us; anything held is the wrong shape now.
     total_ = total;
-    proto_.setMaxFrame(total > 0 ? static_cast<std::size_t>(total) * 5u : 0u);
+    proto_.setMaxFrame(total > 0 ? static_cast<std::size_t>(total) * 3u + 3u : 0u);
     frame_.clear();
   }
   if (!streaming(nowMs)) {

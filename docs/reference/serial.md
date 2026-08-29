@@ -133,19 +133,46 @@ arriving.
 A frame is announced by an ASCII header and followed by exactly that many raw bytes:
 
 ```text
-!F<seq>:<len>\n<len bytes>
+!P<seq>:<len>\n<len bytes>
 ```
 
 | Field | Meaning |
 |---|---|
-| `!F` | full frame: 3 bytes per pixel, `R G B`, row-major from the top-left |
-| `!D` | delta: 5-byte records, pixel index as little-endian `uint16` then `R G B` |
-| `<seq>` | frame counter. A gap tells AWTRIX a frame was lost, which it reports in the stats line |
-| `<len>` | payload length in bytes. Must divide by 3 for `!F`, by 5 for `!D` |
+| `<seq>` | frame counter. A gap tells AWTRIX a frame was lost, which it reports at once and in the stats line |
+| `<len>` | payload length in bytes: a layout byte, its data, and a two-byte checksum |
 
 The payload is read by count, not by delimiter, precisely because pixel data contains `0x0A` and
 `0x0D`. The parser returns to line mode the moment the last byte lands, so commands and frames can
 be interleaved on one connection.
+
+### What is in a payload
+
+```text
+[layout][data ...][crc16 little-endian]
+```
+
+Colours are **RGB565**, little-endian: `rrrrrggg gggbbbbb`. AWTRIX expands them by replicating the
+high bits, so `0x1f` becomes `0xff` and full white stays full white.
+
+| `layout` | Data | Bytes for `n` pixels, `k` of them changed |
+|---|---|---|
+| `0` full | every pixel, row-major from the top-left | `2n` |
+| `1` index | 3-byte records: pixel index as a `uint8`, then its colour | `3k` |
+| `2` mask | a bitmap of which pixels changed, LSB of the first byte is pixel 0, then their colours in index order | `n/8 + 2k` |
+
+Send whichever is smallest for the frame you have. On a 32×8 panel the indices win below 32 changed
+pixels, the bitmap between 32 and 240, and a full frame above - and an indexed frame with **no
+records at all**, three bytes in total, is how you say "nothing changed, but the panel is still
+mine" and keep the hold window open.
+
+The checksum is CRC-16/CCITT-FALSE - poly `0x1021`, init `0xffff`, no reflection, no final xor,
+which checks as `0x29b1` over `123456789` - over the layout byte and the data. A frame that fails it
+is refused and reported; without it a flipped bit is a wrong pixel that stays wrong, because nothing
+else on this cable can tell a frame that arrived wrong from one that arrived right.
+
+Anything whose length its layout cannot explain is refused with `invalidRequest` and counted in
+`bad`: a full frame that is not two bytes a pixel, an indexed one that is not whole records, a mask
+promising more colours than it carries.
 
 `x = index % 32`, `y = index / 32`. You address the logical grid; AWTRIX applies its own wiring map
 afterwards, so the panel's zigzag is not your problem.
@@ -161,8 +188,8 @@ Two consequences:
   with on screen.
 
 The first frame of a new session starts from black, so a partial frame cannot reveal a strip of the
-app that was on screen. *Within* a session pixels persist, which is what makes `!D` and partial
-`!F` frames useful.
+app that was on screen. *Within* a session pixels persist, which is what makes the indexed and
+masked layouts useful at all.
 
 A powered-off display and mood light both beat streaming, as they do Art-Net. Unlike Art-Net,
 streaming *does* beat the provisioning screen: a device with no Wi-Fi credentials is exactly the
@@ -171,9 +198,10 @@ one somebody drives over the cable, so your frames win while they keep arriving 
 
 ### Raising the speed
 
-115200 is the wire limit for full frames, so a faster line is the only way past ~14 fps at 24-bit
-colour. The baud is a build option rather than a setting, because the boot log shares the port and
-a device that came up at a speed your monitor does not expect looks broken:
+115200 carries any content this panel can show at 21.9 fps and most of it far faster, so raising the
+baud is now an answer looking for a question - it was worth it when frames cost three bytes a pixel.
+The baud is a build option rather than a setting, because the boot log shares the port and a device
+that came up at a speed your monitor does not expect looks broken:
 
 ```bash
 pio run -e awtrix_fast_serial -t upload --upload-port /dev/cu.usbserial-XXXX
@@ -193,18 +221,20 @@ higher rate, the bridge did not take it.
 
 ### Throughput
 
-8-N-1 spends ten bits per byte, so 115200 baud carries 11,520 bytes per second. A 32×8 panel is
-768 bytes per full frame:
+8-N-1 spends ten bits per byte, so 115200 baud carries 11,520 bytes per second. A 32×8 frame is 526
+bytes at most - two per pixel, plus the header, the layout byte and the checksum:
 
 | What you send | Bytes/frame | Frames/s at 115200 |
 |---|---|---|
-| `!F` full frame, 24-bit | 768 | **≈ 14** |
-| `!D` delta, 100 pixels changed | 500 | ≈ 22 |
-| `!D` delta, 30 pixels changed | 150 | ≈ 70, wire no longer the limit |
+| a full frame | 526 | **21.9** |
+| a mask, 180 of 256 pixels changed | 406 | 28 |
+| a mask, 100 changed | 246 | 47 |
+| indices, 10 changed | 44 | 262 |
+| nothing changed | 14 | - |
 
 The device caps out around 55-65 fps regardless: 256 WS2812 LEDs take 7.7 ms to clock out, and the
-loop still has to run everything else. So the wire is the constraint for full frames and the panel
-is the constraint for sparse deltas.
+loop still has to run everything else. So the wire is the constraint for a panel that is entirely
+repainted every frame, and the panel is the constraint for everything else.
 
 Every 100 frames AWTRIX reports what it actually achieved, which is the number worth trusting:
 
@@ -224,18 +254,24 @@ moment it is seen:
 
 ```text
 <<{"stat":"gap","expected":412,"got":414,"missed":3}
+<<{"stat":"crc","seq":415,"bad":1}
 ```
 
 `expected` is the number that should have come next, `got` is what did, and `missed` is the running
-count for this window. At most one of these is sent every 500 ms, so a cable that has genuinely
-fallen apart does not spend what capacity it has left telling you so.
+count for this window. The second line is the same news for a frame that arrived whole but wrong.
+At most one notice is sent every 500 ms, and the two share that budget, so a cable that has genuinely
+fallen apart does not spend what capacity it has left telling you so - and a corrupt frame is not
+reported twice, once for its checksum and once for the hole it leaves in the numbering.
 
-**If you stream deltas, you must act on this.** A `!D` frame describes the difference from what the
-panel is holding, so a frame that never arrived leaves your idea of the panel and the panel itself
-permanently disagreeing - and every delta after it inherits the error. Send one `!F` and the two
-agree again. Waiting for the hundred-frame summary is far too late, which is why this notice exists.
+**If you send anything but full frames, you must act on this.** The indexed and masked layouts
+describe the difference from what the panel is holding, so a frame that never arrived leaves your
+idea of the panel and the panel itself permanently disagreeing - and every frame after it inherits
+the error. Send one full frame and the two agree again. Waiting for the hundred-frame summary is far
+too late, which is why this notice exists.
 
-A sender that only ever writes `!F` can ignore it: the next frame repaints everything anyway.
+A sender that only ever sends full frames can ignore it: the next frame repaints everything anyway.
+`pixelwired` sends one every three seconds regardless, which is what bounds how long a pixel nobody
+noticed going wrong can stay wrong.
 
 Two other things streaming does not control, exactly as with Art-Net: **brightness** (including
 auto-brightness, which will dim your frames as the room darkens) and the **colour pipeline**
