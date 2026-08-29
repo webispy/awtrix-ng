@@ -86,6 +86,9 @@ std::string serialCapabilitiesJson(const RuntimeState& s) {
   w.key("controls");
   w.beginArray();
   w.value("brightness");
+  // A host that has stopped drawing can say so: `cmd/stream/release` gives the screen back at once
+  // instead of at the end of the hold window.
+  w.value("streamRelease");
   w.endArray();
   w.key("sensors");
   w.beginObject();

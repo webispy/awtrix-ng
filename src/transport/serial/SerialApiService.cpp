@@ -85,6 +85,17 @@ void SerialApiService::pump(int64_t nowMs) {
                 proto_.seq());
           break;
         }
+        // Hand the panel back now rather than at the end of the hold window. Without it a host
+        // that has stopped drawing has no way to say so, and the five seconds that keep a stream
+        // alive between frames become five seconds of a picture nobody is sending any more - which
+        // is what turning the console's output switch off looked like.
+        if (proto_.topic() == "cmd/stream/release") {
+          lastFrameMs_ = -100000;
+          frame_.clear();
+          lastSeq_ = -1;
+          reply("{\"ok\":true}", proto_.seq());
+          break;
+        }
         if (proto_.topic() == "qry/capabilities") {
           reply(api::serialCapabilitiesJson(engine_->state().runtime()), proto_.seq());
           break;
